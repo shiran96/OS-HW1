@@ -1,0 +1,17 @@
+#include <iostream>
+#include <signal.h>
+#include "signals.h"
+#include "Commands.h"
+
+using namespace std;
+
+void ctrlCHandler(int sig_num) {
+  std::cout << "\n";
+  exit(0);
+  // TODO: Add your implementation
+}
+
+void alarmHandler(int sig_num) {
+  // TODO: Add your implementation
+}
+
