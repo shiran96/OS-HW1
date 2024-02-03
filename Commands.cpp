@@ -5,18 +5,18 @@
 #include <sstream>
 #include <sys/wait.h>
 #include <iomanip>
-#include <fstream>
 #include "Commands.h"
 #include <sys/stat.h>
+#include <fcntl.h>
 
 using namespace std;
 
 #if 0
 #define FUNC_ENTRY()  \
-  cout << __PRETTY_FUNCTION__ << " --> " << endl;
+  cstd::cout << __PRETTY_FUNCTION__ << " --> " << endl;
 
 #define FUNC_EXIT()  \
-  cout << __PRETTY_FUNCTION__ << " <-- " << endl;
+  cstd::cout << __PRETTY_FUNCTION__ << " <-- " << endl;
 #else
 #define FUNC_ENTRY()
 #define FUNC_EXIT()
@@ -81,56 +81,75 @@ void _removeBackgroundSign(char* cmd_line) {
 
 // TODO: Add your implementation for classes in Commands.h 
 Command::Command(const char* cmd_line) {
+  this->std_fd = dup(1);
   string temp = string(cmd_line);
   stringstream ss(temp);
   string buffer;
   while (ss >> buffer) {
     this->words.push_back(buffer);
   }
-}
-RedirectionCommand::RedirectionCommand(const char* cmd_line) : Command(cmd_line) {
-  this->valid = this->words.size() > 2;
-  if (this->valid) {
-    this->dest_file = this->words[this->words.size()-1].c_str();
+
+  // Find if need to redirect output
+  this->redirect = this->words.size() > 2;
+  const char* dest_file;
+  int wtype;
+  if (this->redirect) {
+    dest_file = this->words[this->words.size()-1].c_str();
     if (this->words[this->words.size()-2].compare(">") == 0) {
-      this->wtype = "w";
+      wtype = O_WRONLY|O_CREAT|O_TRUNC;
     }
     else if (this->words[this->words.size()-2].compare(">>") == 0) {
-      this->wtype = "a";
+      wtype = O_WRONLY|O_APPEND|O_CREAT;
     }
     else {
-      this->valid = false;
+      this->redirect = false;
     }
   }
-}
-std::ostream* RedirectionCommand::prepare() {
-  if (this->valid) {
-    if (*this->wtype=='a')
-    {
-      this->outputStream = new std::ofstream(this->dest_file, std::ios::app);
+
+  // Redirect stdout
+  if (this->redirect) {
+    int perm = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+    this->fd = open(dest_file, wtype, perm);
+    if (this->fd == -1) {
+      perror("smash error: open: failed");
+      this->redirect = false;
     }
     else {
-      this->outputStream = new std::ofstream(this->dest_file);
-    }
-    return outputStream;
-  }
-  else {
-    return &std::cout;
-  }
-}
-RedirectionCommand::~RedirectionCommand() {
-  if (this->valid) {
-    if (this->outputStream != nullptr) {
-      delete outputStream;
+      close(1);
+      if (dup2(this->fd, 1)==-1) {
+        perror("smash error: dup2: failed");
+        close(this->fd);
+        dup2(this->std_fd, 1);
+        this->redirect = false;
+      }
     }
   }
+  
+  // Background check
+  std::string last = this->words[this->words.size() - 1];
+  this->background = *(last.end()-1) == '&';
+  if (this->background) {
+    if (last.compare("&")==0) {
+      this->words.pop_back();
+    }
+    else {
+      this->words[this->words.size() - 1] = last.substr(0, last.size()-1); // remove it from command
+    }
+  }
 }
+Command::~Command() {
+  if (this->redirect) {
+    close(this->fd);
+    dup2(this->std_fd, 1);
+  }
+}
+
 ChangeDirCommand::ChangeDirCommand(const char* cmd_line, char** plastPwd) : BuiltInCommand(cmd_line) {
   this->dest = this->words[1];
   this->last = plastPwd;
 }
 
-void ChangeDirCommand::execute(std::ostream& out) {
+void ChangeDirCommand::execute() {
   char* current = getcwd(NULL, 0);
   if (this->words.size() > 2)
     std::cerr << "smash error: cd: too many arguments\n";
@@ -169,7 +188,7 @@ ChmodCommand::ChmodCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {
   }
 }
 
-void ChmodCommand::execute(std::ostream& out) {
+void ChmodCommand::execute() {
   if (!this->valid) {
     std::cerr << "smash error: chmod: invalid arguments\n";
   }
@@ -178,55 +197,97 @@ void ChmodCommand::execute(std::ostream& out) {
   }
 }
 
-void QuitCommand::execute(std::ostream& out) {
+void QuitCommand::execute() {
   exit(0);
 }
 
-void ShowPidCommand::execute(std::ostream& out) {
+void ShowPidCommand::execute() {
   int p=getpid();
   if (p==-1) {
     perror("smash error: getpid: failed");
   }
   else {
-    out << "smash pid is " << getpid() << "\n";
+    std::cout << "smash pid is " << getpid() << "\n";
   }
 }
 
-void GetCurrDirCommand::execute(std::ostream& out) {
+void GetCurrDirCommand::execute() {
   const char* cwd = getcwd(NULL, 0);
   if (cwd == NULL) {
     perror("smash error: getcwd: failed");
   }
   else {
-    out << cwd << "\n";
+    std::cout << cwd << "\n";
     delete cwd;
   }
 }
 
-void ExternalCommand::execute(std::ostream& out) {
-  /*int p=fork();
-  // Assumes not in background, make when a child is done send a signal to main process?
-  if (p == 0) {
-    if (this->words.size() > 1)
-    {
-      char** args = new char*[this->words.size()-1];
-      for (string arg : std::vector<string>(this->words.begin()+1, this->words.end()))
-      {
-        dup2()
-      }
-      delete args;
-    }
-    else {
-    }
-    exit(0);
+ExternalCommand::ExternalCommand(const char* cmd_line) : Command(cmd_line){
+  // Get full command (no redirection)
+  std::string full_cmd = string(cmd_line);
+  if (this->redirect) 
+    full_cmd = full_cmd.substr(0, full_cmd.find(" >"));
+
+  // Find if need /bin/bash
+  this->complex = false;
+  this->complex |= full_cmd.find('?') != std::string::npos;
+  this->complex |= full_cmd.find('*') != std::string::npos;
+  if (this->complex) {
+    this->command = string("/bin/bash");
   }
   else {
-    int* ret_val;
-    waitpid(p, ret_val, 0);
-  }*/
+    this->command = this->words[0];
+  }
+
+  // Find the argvs
+  int argc = !this->complex ? this->words.size() - 2 * this->redirect : 3;
+  if (!this->complex) { // normal external
+    int argc = this->words.size() - 2 * this->redirect;
+    this->argv = new char*[argc+1];
+    for (int i=0; i < argc; i++) {
+      this->argv[i] = new char[this->words[i].size()+1];
+      strcpy(this->argv[i], this->words[i].c_str());
+    }
+  }
+  else {
+    this->argv = new char*[4]; // bash -c "command"
+    this->argv[0] = new char[10]; // "/bin/bash" + null terminator
+    strcpy(this->argv[0], "/bin/bash");
+    this->argv[1] = new char[3]; // "-c" + null terminator
+    strcpy(this->argv[1], "-c");
+    this->argv[2] = new char[full_cmd.size()+1];
+    strcpy(this->argv[2], full_cmd.c_str());
+  }
+  this->argv[argc] = nullptr;
 }
 
+void ExternalCommand::execute() {
+  int p=fork();
+  if (p == -1) { // failed
+    perror("smash error: fork: failed");
+  } // parent
+  else if (p==0) {
+    execvp(this->command.c_str(), this->argv);
+    perror("smash error: execvp: failed");
+    exit(1);
+  }
+  else {
+    if (!this->background) {
+      waitpid(p, nullptr, 0);
+    }
+    else {
+      // add to jobs
+    }
+  }
+}
 
+ExternalCommand::~ExternalCommand() {
+  int argc = (!this->complex) ? (this->words.size() - 2 * this->redirect) : 3;
+  for (int i=0; i<argc; i++) {
+    delete[] this->argv[i];
+  }
+  delete[] this->argv;
+}
 
 SmallShell::SmallShell() {
 // TODO: add your implementation
@@ -245,16 +306,16 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
   string cmd_s = _trim(string(cmd_line));
   string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
 
-  if (firstWord.compare("showpid") == 0) {
+  if (firstWord.compare("showpid") == 0 || firstWord.compare("showpid&") == 0) {
     return new ShowPidCommand(cmd_line);
   }
-  else if (firstWord.compare("pwd") == 0) {
+  else if (firstWord.compare("pwd") == 0 || firstWord.compare("pwd&") == 0) {
     return new GetCurrDirCommand(cmd_line);
   }
   else if (firstWord.compare("cd") == 0) {
       return new ChangeDirCommand(cmd_line, &(this->last_pwd));
   }
-  else if (firstWord.compare("quit") == 0) {
+  else if (firstWord.compare("quit") == 0 ||firstWord.compare("quit&") == 0) {
     return new QuitCommand(cmd_line, NULL);
   }
   else if (firstWord.compare("chmod") == 0) {
@@ -268,10 +329,11 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
 void SmallShell::executeCommand(const char *cmd_line) {
   // TODO: Add your implementation here
   // for example:
-  RedirectionCommand rd = RedirectionCommand(_trim(string(cmd_line)).c_str());
-  std::ostream* out = rd.prepare();
+  /*RedirectionCommand rd = RedirectionCommand(_trim(string(cmd_line)).c_str());
+  std::ostream* std::cout = rd.prepare();*/
   Command* cmd = CreateCommand(cmd_line);
-  cmd->execute(*out);
+  cmd->execute();
+  delete cmd;
   //delete rd;
   // Please note that you must fork smash process for some commands (e.g., external commands....)
 }

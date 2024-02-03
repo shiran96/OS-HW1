@@ -12,10 +12,15 @@ class Command {
 // TODO: Add your data members
  public:
  
+  bool background;
+  bool redirect;
+  char** argv;
+  int fd;
+  int std_fd;
   std::vector<std::string> words;
   Command(const char* cmd_line);
-  virtual ~Command() {}
-  virtual void execute(std::ostream& out) = 0;
+  virtual ~Command();
+  virtual void execute() = 0;
   //virtual void prepare();
   //virtual void cleanup();
   // TODO: Add your extra methods if needed
@@ -29,21 +34,12 @@ class BuiltInCommand : public Command {
 
 class ExternalCommand : public Command {
  public:
-  ExternalCommand(const char* cmd_line) : Command(cmd_line) {}
-  virtual ~ExternalCommand() {}
-  void execute(std::ostream& out) override;
-};
-
-class RedirectionCommand : public Command {
- public:
- bool valid;
- const char* dest_file;
- const char* wtype;
- std::ostream* outputStream = nullptr;
-  RedirectionCommand(const char* cmd_line);
-  ~RedirectionCommand();
-  void execute(std::ostream& out) override {};
-  std::ostream* prepare(); 
+  char** argv;
+  std::string command;
+  bool complex;
+  ExternalCommand(const char* cmd_line);
+  virtual ~ExternalCommand();
+  void execute() override;
 };
 
 class PipeCommand : public Command {
@@ -51,7 +47,7 @@ class PipeCommand : public Command {
  public:
   PipeCommand(const char* cmd_line);
   virtual ~PipeCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class ChangeDirCommand : public BuiltInCommand {
@@ -61,21 +57,21 @@ class ChangeDirCommand : public BuiltInCommand {
 // TODO: Add your data members public:
     ChangeDirCommand(const char* cmd_line, char** plastPwd);
     virtual ~ChangeDirCommand() {}
-    void execute(std::ostream& out) override;
+    void execute() override;
 };
 
 class GetCurrDirCommand : public BuiltInCommand {
  public:
   GetCurrDirCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
   virtual ~GetCurrDirCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class ShowPidCommand : public BuiltInCommand {
  public:
   ShowPidCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {}
   virtual ~ShowPidCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class JobsList;
@@ -84,7 +80,7 @@ class QuitCommand : public BuiltInCommand {
 // TODO: Add your data members public:
     QuitCommand(const char* cmd_line, JobsList* jobs) : BuiltInCommand(cmd_line) {}
     virtual ~QuitCommand() {}
-    void execute(std::ostream& out) override;
+    void execute() override;
 };
 
 
@@ -115,7 +111,7 @@ class JobsCommand : public BuiltInCommand {
  public:
   JobsCommand(const char* cmd_line, JobsList* jobs);
   virtual ~JobsCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class KillCommand : public BuiltInCommand {
@@ -123,7 +119,7 @@ class KillCommand : public BuiltInCommand {
  public:
   KillCommand(const char* cmd_line, JobsList* jobs);
   virtual ~KillCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class ForegroundCommand : public BuiltInCommand {
@@ -131,7 +127,7 @@ class ForegroundCommand : public BuiltInCommand {
  public:
   ForegroundCommand(const char* cmd_line, JobsList* jobs);
   virtual ~ForegroundCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 class ChmodCommand : public BuiltInCommand {
@@ -141,7 +137,7 @@ class ChmodCommand : public BuiltInCommand {
   const char* dest_file;
   ChmodCommand(const char* cmd_line);
   virtual ~ChmodCommand() {}
-  void execute(std::ostream& out) override;
+  void execute() override;
 };
 
 
